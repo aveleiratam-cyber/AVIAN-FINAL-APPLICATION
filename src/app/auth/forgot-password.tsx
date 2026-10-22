@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
 import {
+  Alert,
   SafeAreaView,
   StyleSheet,
   Text,
@@ -9,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { supabase } from '../../config/supabase'; 
 
 export default function ForgotPasswordScreen() {
   const [email, setEmail] = useState('');
@@ -17,19 +19,30 @@ export default function ForgotPasswordScreen() {
   const emailIsValid =
     /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
-  const handleResetPassword = () => {
+  const handleResetPassword = async () => {
     setEmailTouched(true);
 
     if (!email.trim() || !emailIsValid) {
       return;
     }
 
-        router.push({
-    pathname: '/auth/verify-code' as any,
-    params: {
-        email: email.trim(),
-    },
-    });
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
+
+      if (error) {
+        Alert.alert('Reset Failed', error.message);
+        return;
+      }
+
+      router.push({
+        pathname: '/auth/reset-password' as any,
+        params: {
+          email: email.trim(),
+        },
+      });
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'An unexpected error occurred.');
+    }
   };
 
   return (

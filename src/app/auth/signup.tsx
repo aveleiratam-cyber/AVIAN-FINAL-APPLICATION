@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
+  Alert,
   Image,
   Keyboard,
   KeyboardAvoidingView,
@@ -15,6 +16,15 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { makeRedirectUri } from 'expo-auth-session';
+import { supabase } from '../../config/supabase';
+import * as WebBrowser from 'expo-web-browser';
+import {
+  GoogleSignin,
+  statusCodes,
+} from '@react-native-google-signin/google-signin';
+WebBrowser.maybeCompleteAuthSession();
+
 
 export default function SignupScreen() {
   const [passwordVisible, setPasswordVisible] = useState(false);
@@ -58,6 +68,9 @@ export default function SignupScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+
+  const [otpCode, setOtpCode] = useState('');
+  const [otpModalVisible, setOtpModalVisible] = useState(false);
 
   // Which input is being tapped right now (used to hide its placeholder text)
   const [focusedField, setFocusedField] = useState<string | null>(null);
@@ -164,13 +177,42 @@ export default function SignupScreen() {
     router.replace('/auth/login');
   };
 
+  
+
   // Close the pop-up and proceed to the Login page
   const handleSuccessContinue = () => {
     setSuccessModalVisible(false);
     router.replace('/auth/login');
   };
 
-  const handleSignUp = () => {
+
+  // OTP Verification Function
+  const handleVerifyOtp = async () => {
+    if (!otpCode.trim()) {
+      Alert.alert('Error', 'Please enter the 6-digit verification code.');
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase.auth.verifyOtp({
+        email: email.trim(),
+        token: otpCode.trim(),
+        type: 'signup',
+      });
+
+      if (error) {
+        Alert.alert('Verification Failed', error.message);
+        return;
+      }
+
+      setOtpModalVisible(false);
+      setSuccessModalVisible(true); 
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'An unexpected error occurred.');
+    }
+  };
+
+  const handleSignUp = async () => {
     setFirstNameTouched(true);
     setLastNameTouched(true);
     setEmailTouched(true);
@@ -178,7 +220,6 @@ export default function SignupScreen() {
     setConfirmPasswordTouched(true);
     setTermsValidationTouched(true);
 
-    // Stop if anything is invalid
     if (
       firstNameError ||
       lastNameError ||
@@ -190,17 +231,90 @@ export default function SignupScreen() {
       return;
     }
 
-    // TODO: create the account here (Firebase / Supabase / API), e.g.
-    // try {
-    //   await signUp(email.trim(), password, firstName.trim(), lastName.trim());
-    //   setSuccessModalVisible(true);
-    // } catch (error) {
-    //   // show an error like "This email is already registered"
-    // }
+    try {
+      const redirectTo = makeRedirectUri({
+        scheme: 'avian', 
+      });
 
-    // Show the "Account Created" pop-up
-    // (move this line inside the try block once the real sign up call is added)
-    setSuccessModalVisible(true);
+      const { data, error } = await supabase.auth.signUp({
+        email: email.trim(),
+        password: password,
+        options: {
+          emailRedirectTo: redirectTo,
+          data: {
+            first_name: firstName.trim(),
+            last_name: lastName.trim(),
+          },
+        },
+      });
+
+      if (error) {
+        Alert.alert('Sign Up Failed', error.message);
+        return;
+      }
+  
+      if (data.user && data.user.identities && data.user.identities.length === 0) {
+        Alert.alert(
+          'Account Already Exists',
+          'It seems like this credential already exists. Redirecting you to the log in page...',
+          [
+            {
+              text: 'OK',
+              onPress: () => router.replace('/auth/login'),
+            },
+          ]
+        );
+        return;
+      }
+
+      console.log("Supabase signup successful, triggering OTP modal.");
+      setOtpModalVisible(true);
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'An unexpected error occurred.');
+    }
+  };
+
+  GoogleSignin.configure({
+    webClientId: '74998166671-fqust11v3h20vofp74tcrmu4osj006t1.apps.googleusercontent.com', 
+    scopes: ['email', 'profile'],
+  });
+
+  const handleGoogleSignUp = async () => {
+    try {
+      await GoogleSignin.signOut();
+
+      await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+
+      const response = await GoogleSignin.signIn();
+
+      const idToken = response.data?.idToken || (response as any).idToken;
+
+      if (!idToken) {
+        throw new Error('No ID token returned from Google.');
+      }
+      const { data, error } = await supabase.auth.signInWithIdToken({
+        provider: 'google',
+        token: idToken,
+      });
+
+      if (error) {
+        Alert.alert('Google Sign In Failed', error.message);
+        return;
+      }
+
+      if (data.session) {
+        router.replace('/home');
+      }
+    } catch (error: any) {
+      if (error.code === statusCodes.SIGN_IN_CANCELLED) {
+        // User cancelled the login flow
+        return;
+      } else if (error.code === statusCodes.IN_PROGRESS) {
+        return;
+      } else {
+        Alert.alert('Error', error.message || 'An unexpected error occurred.');
+      }
+    }
   };
 
   return (
@@ -497,6 +611,7 @@ export default function SignupScreen() {
 
               <TouchableOpacity
                 style={styles.googleButton}
+                onPress={handleGoogleSignUp}
                 activeOpacity={0.8}
               >
                 <Ionicons name="logo-google" size={22} color="#4285F4" />
@@ -881,6 +996,53 @@ export default function SignupScreen() {
         </SafeAreaView>
       </Modal>
 
+      {/* 6-DIGIT OTP VERIFICATION MODAL */}
+      <Modal
+        visible={otpModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setOtpModalVisible(false)}
+      >
+        <View style={styles.successOverlay}>
+          <View style={styles.successCard}>
+            <View style={styles.successIconCircle}>
+              <Ionicons name="mail-open-outline" size={32} color="#FFFFFF" />
+            </View>
+
+            <Text style={styles.successTitle}>Verify Email</Text>
+
+            <Text style={styles.successMessage}>
+              Enter the 6-digit verification code sent to {email}
+            </Text>
+
+            <TextInput
+              style={[styles.input, { textAlign: 'center', letterSpacing: 8, fontSize: 22, marginVertical: 16 }]}
+              placeholder="000000"
+              placeholderTextColor="#B5B5B5"
+              keyboardType="number-pad"
+              maxLength={6}
+              value={otpCode}
+              onChangeText={setOtpCode}
+            />
+
+            <TouchableOpacity
+              style={styles.successButton}
+              onPress={handleVerifyOtp}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.successButtonText}>VERIFY CODE</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{ marginTop: 12 }}
+              onPress={() => setOtpModalVisible(false)}
+            >
+              <Text style={{ color: '#888', textDecorationLine: 'underline' }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       {/* ACCOUNT CREATED POP-UP */}
       <Modal
         visible={successModalVisible}
@@ -915,6 +1077,8 @@ export default function SignupScreen() {
       </Modal>
     </SafeAreaView>
   );
+
+  
 }
 
 const styles = StyleSheet.create({

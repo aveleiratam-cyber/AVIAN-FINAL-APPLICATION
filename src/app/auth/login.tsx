@@ -1,7 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
+import { supabase } from '../../config/supabase';
 import { router } from 'expo-router';
 import { useState } from 'react';
 import {
+  Alert,
   Image,
   KeyboardAvoidingView,
   Platform,
@@ -12,6 +14,10 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import {
+  GoogleSignin,
+  statusCodes,
+} from '@react-native-google-signin/google-signin';
 
 export default function LoginScreen() {
   const [passwordVisible, setPasswordVisible] = useState(false);
@@ -22,34 +28,98 @@ export default function LoginScreen() {
   const [focusedField, setFocusedField] = useState<'email' | 'password' | null>(null);
   const [loading, setLoading] = useState(false);
   const [loginError, setLoginError] = useState('');
+
   const emailError = !email.trim()
     ? 'Email is required'
     : !/^[a-zA-Z0-9._%+-]+@gmail\.com$/.test(email.trim())
     ? 'Please enter a valid email address'
     : '';
   const passwordError = !password ? 'Password is required' : '';
+
   const handleLogin = async () => {
-  console.log('1. Login pressed');
-  setEmailTouched(true);
-  setPasswordTouched(true);
-  setLoginError('');
+    console.log('1. Login pressed');
+    setEmailTouched(true);
+    setPasswordTouched(true);
+    setLoginError('');
 
-  if (emailError || passwordError) {
-    console.log('2. Blocked by validation:', emailError, passwordError);
-    return;
-  }
+    if (emailError || passwordError) {
+      console.log('2. Blocked by validation:', emailError, passwordError);
+      return;
+    }
 
-  setLoading(true);
-  try {
-    console.log('3. Navigating to home');
-    router.replace('/(tabs)/home');
-  } catch (error) {
-    console.log('LOGIN ERROR:', error);
-    setLoginError('Incorrect email or password');
-  } finally {
-    setLoading(false);
-  }
-};  
+    setLoading(true);
+    try {
+      console.log('3. Authenticating with Supabase...');
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password: password,
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      console.log('4. Login successful, navigating to home');
+      router.replace('/(tabs)/home');
+    } catch (error: any) {
+      console.log('LOGIN ERROR:', error);
+      
+      if (error.message?.includes('Email not confirmed')) {
+        setLoginError('Please verify your email address before logging in.');
+      } else {
+        setLoginError('Incorrect email or password');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  GoogleSignin.configure({
+    webClientId: '74998166671-fqust11v3h20vofp74tcrmu4osj006t1.apps.googleusercontent.com', 
+    scopes: ['email', 'profile'],
+  });
+
+  const handleGoogleLogin = async () => {
+    try {
+      // 1. Clear cached session so the account picker opens fresh every time
+      await GoogleSignin.signOut();
+
+      // 2. Check if device supports Google Play Services
+      await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+
+      // 3. Open Native Google Sign-In Modal
+      const response = await GoogleSignin.signIn();
+
+      const idToken = response.data?.idToken || (response as any).idToken;
+
+      if (!idToken) {
+        throw new Error('No ID token returned from Google.');
+      }
+
+      // 4. Authenticate directly with Supabase using the Google ID token
+      const { data, error } = await supabase.auth.signInWithIdToken({
+        provider: 'google',
+        token: idToken,
+      });
+
+      if (error) {
+        Alert.alert('Google Sign In Failed', error.message);
+        return;
+      }
+
+      if (data.session) {
+        router.replace('/(tabs)/home');
+      }
+    } catch (error: any) {
+      if (error.code === statusCodes.SIGN_IN_CANCELLED) {
+        return;
+      } else if (error.code === statusCodes.IN_PROGRESS) {
+        return;
+      } else {
+        Alert.alert('Error', error.message || 'An unexpected error occurred.');
+      }
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -178,7 +248,7 @@ export default function LoginScreen() {
               <Text style={styles.forgotPassword}>Forgot Password?</Text>
             </TouchableOpacity>
 
-            {/* LOGIN ERROR FROM SERVER (wrong email or password) */}
+            {/* LOGIN ERROR FROM SERVER */}
             <View style={styles.loginErrorSlot}>
               {!!loginError && (
                 <Text style={[styles.errorText, styles.loginErrorText]}>
@@ -200,6 +270,22 @@ export default function LoginScreen() {
               <Text style={styles.loginText}>
                 {loading ? 'LOGGING IN...' : 'LOG IN'}
               </Text>
+            </TouchableOpacity>
+
+            {/* DIVIDER + GOOGLE LOGIN */}
+            <View style={styles.dividerContainer}>
+              <View style={styles.divider} />
+              <Text style={styles.dividerText}>OR</Text>
+              <View style={styles.divider} />
+            </View>
+
+            <TouchableOpacity
+              style={styles.googleButton}
+              onPress={handleGoogleLogin}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="logo-google" size={20} color="#4285F4" />
+              <Text style={styles.googleText}>Continue with Google</Text>
             </TouchableOpacity>
 
             {/* SIGN UP */}
@@ -225,22 +311,16 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-
   flex: {
     flex: 1,
   },
-
-  // Whole screen: logo on top (flexible), heading and card at the bottom
   content: {
     flex: 1,
-    justifyContent: 'center', // keeps logo + form together, centered on the screen
+    justifyContent: 'center',
     paddingHorizontal: 22,
     paddingTop: 0,
     paddingBottom: 24,
   },
-
-  /* LOGO */
-
   logoSection: {
     alignItems: 'center',
   },
@@ -255,7 +335,6 @@ const styles = StyleSheet.create({
     width: 460,
     height: 414,
   },
-
   subtitle: {
     marginTop: 0,
     paddingHorizontal: 5,
@@ -264,22 +343,17 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
-
-  /* HEADING */
-
   header: {
     alignItems: 'center',
     marginTop: 0,
     marginBottom: 10,
   },
-
   welcome: {
     fontSize: 30,
     fontWeight: '800',
     color: '#087A24',
     textAlign: 'center',
   },
-
   description: {
     marginTop: 6,
     color: '#8A8A8A',
@@ -287,9 +361,6 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     textAlign: 'center',
   },
-
-  /* CARD */
-
   loginCard: {
     width: '100%',
     borderWidth: 3.5,
@@ -299,18 +370,15 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 14,
   },
-
   inputGroup: {
     marginBottom: 2,
   },
-
   label: {
     fontSize: 12,
     color: '#999999',
     marginLeft: 5,
     marginBottom: 5,
   },
-
   inputWrapper: {
     height: 48,
     borderWidth: 1.5,
@@ -321,11 +389,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 12,
   },
-
   inputError: {
     borderColor: '#FF3B30',
   },
-
   input: {
     flex: 1,
     height: '100%',
@@ -338,35 +404,29 @@ const styles = StyleSheet.create({
     minHeight: 18,
     justifyContent: 'center',
   },
-
   errorText: {
     color: '#FF3B30',
     fontSize: 11,
     marginLeft: 5,
   },
-
   loginErrorSlot: {
     minHeight: 18,
     justifyContent: 'center',
     marginBottom: 4,
   },
-
   loginErrorText: {
     textAlign: 'center',
     marginLeft: 0,
   },
-
   forgotContainer: {
     alignItems: 'flex-end',
     marginBottom: 4,
   },
-
   forgotPassword: {
     color: '#15803D',
     fontSize: 11,
     fontWeight: '700',
   },
-
   loginButton: {
     height: 48,
     backgroundColor: '#009B00',
@@ -374,29 +434,57 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-
   loginButtonDisabled: {
     opacity: 0.6,
   },
-
   loginText: {
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '700',
   },
-
+  dividerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 10,
+  },
+  divider: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#E0E0E0',
+  },
+  dividerText: {
+    marginHorizontal: 10,
+    fontSize: 11,
+    color: '#888888',
+    fontWeight: '600',
+  },
+  googleButton: {
+    flexDirection: 'row',
+    backgroundColor: '#F5F5F5',
+    borderWidth: 1.5,
+    borderColor: '#D4D4D4',
+    borderRadius: 9,
+    height: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  googleText: {
+    marginLeft: 10,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#333333',
+  },
   signupContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 14,
+    marginTop: 10,
   },
-
   noAccountText: {
     color: '#333333',
     fontSize: 12,
   },
-
   signup: {
     color: '#15803D',
     fontSize: 12,

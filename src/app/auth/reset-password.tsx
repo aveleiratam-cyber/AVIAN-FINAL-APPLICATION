@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
 import {
+  Alert,
   SafeAreaView,
   StyleSheet,
   Text,
@@ -9,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { supabase } from '../../config/supabase';
 
 export default function ResetPasswordScreen() {
   const [passwordVisible, setPasswordVisible] =
@@ -39,7 +41,7 @@ export default function ResetPasswordScreen() {
     passwordHasNumber &&
     passwordHasSpecial;
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
     setPasswordTouched(true);
     setConfirmPasswordTouched(true);
 
@@ -51,9 +53,23 @@ export default function ResetPasswordScreen() {
       return;
     }
 
-    // Frontend-only:
-    // return to Login after successful password reset
-    router.replace('/auth/login');
+    try {
+      // Update the user's password via Supabase Auth
+      const { error } = await supabase.auth.updateUser({
+        password: password,
+      });
+
+      if (error) {
+        Alert.alert('Update Failed', error.message);
+        return;
+      }
+
+      Alert.alert('Success', 'Your password has been reset successfully.', [
+        { text: 'Log In', onPress: () => router.replace('/auth/login') }
+      ]);
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'An unexpected error occurred.');
+    }
   };
 
   return (
