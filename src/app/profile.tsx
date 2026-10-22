@@ -14,6 +14,7 @@ import {
   View,
 } from 'react-native';
 import { useProfile } from '../context/ProfileContext';
+import { supabase } from '../config/supabase'; 
 
 export default function ProfileScreen() {
   const {
@@ -39,9 +40,6 @@ export default function ProfileScreen() {
     subtitle: '',
   });
 
-  // =========================
-  // PICK PROFILE IMAGE
-  // =========================
   const handlePickImage = async () => {
     const permissionResult =
       await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -75,10 +73,7 @@ export default function ProfileScreen() {
     }
   };
 
-  // =========================
-  // SAVE FULL NAME
-  // =========================
-  const handleSaveName = () => {
+  const handleSaveName = async () => {
     if (!firstNameInput.trim() || !lastNameInput.trim()) {
       Alert.alert(
         'Validation Error',
@@ -100,26 +95,41 @@ export default function ProfileScreen() {
       return;
     }
 
-    setFullName(
-      `${firstNameInput.trim()} ${lastNameInput.trim()}`.trim()
-    );
+    const newFirstName = firstNameInput.trim();
+    const newLastName = lastNameInput.trim();
+    const updatedFullName = `${newFirstName} ${newLastName}`;
 
-    setIsEditingName(false);
-    setFirstNameInput('');
-    setLastNameInput('');
+    try {
+      // Update user metadata in Supabase Auth
+      const { error } = await supabase.auth.updateUser({
+        data: {
+          first_name: newFirstName,
+          last_name: newLastName,
+        },
+      });
 
-    setSuccessMessage({
-      title: 'Full Name Updated',
-      subtitle: 'Your full name has been successfully changed.',
-    });
+      if (error) {
+        Alert.alert('Update Failed', error.message);
+        return;
+      }
 
-    setSuccessModalVisible(true);
+      setFullName(updatedFullName);
+      setIsEditingName(false);
+      setFirstNameInput('');
+      setLastNameInput('');
+
+      setSuccessMessage({
+        title: 'Full Name Updated',
+        subtitle: 'Your full name has been successfully changed.',
+      });
+
+      setSuccessModalVisible(true);
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'An unexpected error occurred.');
+    }
   };
 
-  // =========================
-  // SAVE EMAIL
-  // =========================
-  const handleSaveEmail = () => {
+  const handleSaveEmail = async () => {
     if (!emailInput.trim()) {
       Alert.alert(
         'Validation Error',
@@ -138,17 +148,31 @@ export default function ProfileScreen() {
       return;
     }
 
-    setEmail(emailInput.trim());
+    const newEmail = emailInput.trim();
 
-    setIsEditingEmail(false);
-    setEmailInput('');
+    try {
+      const { error } = await supabase.auth.updateUser({
+        email: newEmail,
+      });
 
-    setSuccessMessage({
-      title: 'Email Updated',
-      subtitle: 'Your email address has been successfully changed.',
-    });
+      if (error) {
+        Alert.alert('Update Failed', error.message);
+        return;
+      }
 
-    setSuccessModalVisible(true);
+      setEmail(newEmail);
+      setIsEditingEmail(false);
+      setEmailInput('');
+
+      setSuccessMessage({
+        title: 'Email Updated',
+        subtitle: 'Please check your new email inbox for confirmation links if required.',
+      });
+
+      setSuccessModalVisible(true);
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'An unexpected error occurred.');
+    }
   };
 
   return (
@@ -407,9 +431,6 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
 
-  // =========================
-  // HEADER
-  // =========================
   header: {
     backgroundColor: '#15803D',
     flexDirection: 'row',
@@ -434,9 +455,6 @@ const styles = StyleSheet.create({
     width: 32,
   },
 
-  // =========================
-  // PROFILE CARD
-  // =========================
   card: {
     backgroundColor: '#FFFFFF',
     margin: 20,
@@ -467,9 +485,6 @@ const styles = StyleSheet.create({
     height: '100%',
   },
 
-  // =========================
-  // INFORMATION
-  // =========================
   infoRow: {
     width: '100%',
     flexDirection: 'row',
@@ -505,9 +520,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#F1F5F9',
   },
 
-  // =========================
-  // MODAL
-  // =========================
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -568,9 +580,6 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
 
-  // =========================
-  // SUCCESS MODAL
-  // =========================
   successModalContent: {
     backgroundColor: '#FFFFFF',
     borderRadius: 20,

@@ -1,11 +1,13 @@
+import { supabase } from '../config/supabase';
 import { useRouter } from 'expo-router';
 import { ArrowLeft, Check, Eye, EyeOff } from 'lucide-react-native';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 export default function ChangePasswordScreen() {
   const router = useRouter();
 
+  const [isGoogleUser, setIsGoogleUser] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -14,19 +16,42 @@ export default function ChangePasswordScreen() {
   const [showCurrent, setShowCurrent] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  // Validation rules checkers
+  // Detect whether user logged in via Google OAuth
+  useEffect(() => {
+    async function checkUserProvider() {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const googleIdentity = user.identities?.find(
+          (identity) => identity.provider === 'google'
+        );
+        // If Google identity is present and user only has 1 identity without prior local password
+        if (googleIdentity && user.identities?.length === 1) {
+          setIsGoogleUser(true);
+        }
+      }
+    }
+    checkUserProvider();
+  }, []);
+
+  // Password validation checks
   const hasMinLength = newPassword.length >= 8;
   const hasNumber = /\d/.test(newPassword);
   const hasUppercase = /[A-Z]/.test(newPassword);
 
-  const handleSave = () => {
-    if (!currentPassword || !newPassword || !confirmPassword) {
-      Alert.alert('Error', 'Please fill in all fields.');
+  const handleSave = async () => {
+    if (!isGoogleUser && !currentPassword) {
+      Alert.alert('Error', 'Please enter your current password.');
       return;
     }
 
-    if (currentPassword === newPassword) {
+    if (!newPassword || !confirmPassword) {
+      Alert.alert('Error', 'Please fill in all required password fields.');
+      return;
+    }
+
+    if (!isGoogleUser && currentPassword === newPassword) {
       Alert.alert('Error', 'New password must be different from your current password.');
       return;
     }
@@ -41,11 +66,29 @@ export default function ChangePasswordScreen() {
       return;
     }
 
-    Alert.alert(
-      'Success',
-      'Your password has been successfully changed.',
-      [{ text: 'OK', onPress: () => router.back() }]
-    );
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+
+      if (error) {
+        Alert.alert('Error', error.message);
+        return;
+      }
+
+      Alert.alert(
+        'Success',
+        isGoogleUser 
+          ? 'Password set successfully! You can now log in using either Google or Email/Password.'
+          : 'Your password has been successfully changed.',
+        [{ text: 'OK', onPress: () => router.back() }]
+      );
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'An error occurred while updating the password.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -55,33 +98,50 @@ export default function ChangePasswordScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <ArrowLeft size={24} color="#FFFFFF" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Change Password</Text>
+        <Text style={styles.headerTitle}>
+          {isGoogleUser ? 'Set Password' : 'Change Password'}
+        </Text>
         <View style={{ width: 24 }} />
       </View>
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        {/* Current Password Field */}
-        <Text style={styles.label}>Current Password</Text>
-        <View style={styles.inputContainer}>
-          <TextInput
-            style={styles.input}
-            secureTextEntry={!showCurrent}
-            value={currentPassword}
-            onChangeText={setCurrentPassword}
-            placeholder="Enter current password"
-            placeholderTextColor="#94A3B8"
-          />
-          <TouchableOpacity onPress={() => setShowCurrent(!showCurrent)}>
-            {showCurrent ? (
-              <EyeOff size={20} color="#64748B" />
-            ) : (
-              <Eye size={20} color="#64748B" />
-            )}
-          </TouchableOpacity>
-        </View>
+        {/* Banner Notice for Google-only users */}
+        {isGoogleUser && (
+          <View style={styles.googleNotice}>
+            <Text style={styles.googleNoticeText}>
+              You currently log in using Google. Setting a password allows you to log in with email and password as well.
+            </Text>
+          </View>
+        )}
+
+        {/* Current Password Field (Only for Email / Resend Users) */}
+        {!isGoogleUser && (
+          <>
+            <Text style={styles.label}>Current Password</Text>
+            <View style={styles.inputContainer}>
+              <TextInput
+                style={styles.input}
+                secureTextEntry={!showCurrent}
+                value={currentPassword}
+                onChangeText={setCurrentPassword}
+                placeholder="Enter current password"
+                placeholderTextColor="#94A3B8"
+              />
+              <TouchableOpacity onPress={() => setShowCurrent(!showCurrent)}>
+                {showCurrent ? (
+                  <EyeOff size={20} color="#64748B" />
+                ) : (
+                  <Eye size={20} color="#64748B" />
+                )}
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
 
         {/* New Password Field */}
-        <Text style={styles.label}>New Password</Text>
+        <Text style={styles.label}>
+          {isGoogleUser ? 'Create Password' : 'New Password'}
+        </Text>
         <View style={styles.inputContainer}>
           <TextInput
             style={styles.input}
@@ -154,11 +214,14 @@ export default function ChangePasswordScreen() {
 
         {/* Save Changes Button */}
         <TouchableOpacity 
-          style={styles.saveButton} 
+          style={[styles.saveButton, loading && { opacity: 0.7 }]} 
           activeOpacity={0.8}
           onPress={handleSave}
+          disabled={loading}
         >
-          <Text style={styles.saveButtonText}>Save Changes</Text>
+          <Text style={styles.saveButtonText}>
+            {loading ? 'Saving...' : 'Save Changes'}
+          </Text>
         </TouchableOpacity>
       </ScrollView>
     </View>
@@ -190,6 +253,19 @@ const styles = StyleSheet.create({
   content: {
     padding: 20,
     paddingBottom: 40,
+  },
+  googleNotice: {
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+  },
+  googleNoticeText: {
+    fontSize: 13,
+    color: '#166534',
+    lineHeight: 18,
   },
   label: {
     fontSize: 14,

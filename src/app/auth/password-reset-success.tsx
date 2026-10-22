@@ -12,37 +12,23 @@ export default function PasswordResetSuccessScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.content}>
-        {/* BACK */}
-        <TouchableOpacity
-          onPress={() => router.back()}
-          activeOpacity={0.7}
-          style={styles.backButton}
-        >
-          <Ionicons
-            name="arrow-back"
-            size={23}
-            color="#222222"
-          />
-        </TouchableOpacity>
-
         {/* TITLE */}
         <Text style={styles.title}>Password reset</Text>
 
         <Text style={styles.description}>
-          Your password has been successfully reset.
-          {'\n'}
-          click confirm to set a new password
+          Your password has been successfully reset.{'\n'}
+          You can now log in with your new password.
         </Text>
 
-        {/* CONFIRM */}
+        {/* CONFIRM / GO TO LOGIN */}
         <TouchableOpacity
           style={styles.confirmButton}
           onPress={() =>
-            router.push('/auth/reset-password')
+            router.replace('/auth/login')
           }
           activeOpacity={0.8}
         >
-          <Text style={styles.confirmText}>Confirm</Text>
+          <Text style={styles.confirmText}>Go to Log In</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -58,15 +44,9 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     paddingHorizontal: 15,
-    paddingTop: 10,
-  },
-
-  backButton: {
-    width: 35,
-    height: 35,
+    paddingTop: 30,
     justifyContent: 'center',
-    alignItems: 'flex-start',
-    marginBottom: 5,
+    alignItems: 'center',
   },
 
   title: {
@@ -74,6 +54,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#111111',
     marginTop: 2,
+    textAlign: 'center',
   },
 
   description: {
@@ -81,9 +62,11 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     color: '#555555',
     marginTop: 7,
+    textAlign: 'center',
   },
 
   confirmButton: {
+    width: '100%',
     height: 45,
     backgroundColor: '#39B537',
     borderRadius: 9,
