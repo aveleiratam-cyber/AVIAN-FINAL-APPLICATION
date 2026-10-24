@@ -1,53 +1,162 @@
 import { useRouter } from 'expo-router';
-import { ArrowLeft, Wifi } from 'lucide-react-native';
-import { useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ArrowLeft, Eye, EyeOff, Wifi, X } from 'lucide-react-native';
+import { useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Modal,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+
+const AIO_USERNAME = 'systemprototype1017';
+const AIO_KEY = process.env.EXPO_PUBLIC_AIO_KEY || '';
 
 export default function IotDevicesScreen() {
   const router = useRouter();
-  
-  // Validations at States para sa Device at Sensors
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [isReconnecting, setIsReconnecting] = useState(false);
-  const [isConnected, setIsConnected] = useState(true);
-  const [lastSyncTime, setLastSyncTime] = useState('Today, 9:41 PM');
-  const [signalStrength, setSignalStrength] = useState(80); // 80%
 
-  // Validation function para sa pag-sync ng device
-  const handleSynchronize = () => {
-    setIsSyncing(true);
+  const [isConnected, setIsConnected] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState('Checking...');
+  const [signalStrength, setSignalStrength] = useState(0);
+
+  const [tempStatus, setTempStatus] = useState('Checking...');
+  const [tempColor, setTempColor] = useState('#64748B');
+
+  const [humStatus, setHumStatus] = useState('Checking...');
+  const [humColor, setHumColor] = useState('#64748B');
+
+  const [ammoniaStatus, setAmmoniaStatus] = useState('Checking...');
+  const [ammoniaColor, setAmmoniaColor] = useState('#64748B');
+
+  const [ventStatus, setVentStatus] = useState('Standby');
+  const [ventColor, setVentColor] = useState('#CA8A04');
+
+  const [wifiModalVisible, setWifiModalVisible] = useState(false);
+  const [ssid, setSsid] = useState('');
+  const [wifiPassword, setWifiPassword] = useState('');
+  const [showWifiPassword, setShowWifiPassword] = useState(false);
+  const [isUpdatingCloud, setIsUpdatingCloud] = useState(false);
+  const [isUpdatingLocal, setIsUpdatingLocal] = useState(false);
+
+  useEffect(() => {
+    const checkSensorFeeds = async () => {
+      const headers: HeadersInit = AIO_KEY ? { 'X-AIO-Key': AIO_KEY } : {};
+
+      try {
+        const [tempRes, humRes, ammoniaRes] = await Promise.all([
+          fetch(`https://io.adafruit.com/api/v2/${AIO_USERNAME}/feeds/temp/data/last`, { headers }),
+          fetch(`https://io.adafruit.com/api/v2/${AIO_USERNAME}/feeds/hum/data/last`, { headers }),
+          fetch(`https://io.adafruit.com/api/v2/${AIO_USERNAME}/feeds/ammonia/data/last`, { headers }),
+        ]);
+
+        const tempData = await tempRes.json();
+        const humData = await humRes.json();
+        const ammoniaData = await ammoniaRes.json();
+
+        if (tempData?.value || humData?.value || ammoniaData?.value) {
+          setIsConnected(true);
+          setSignalStrength(85);
+          setLastSyncTime('Just now');
+
+          setTempStatus('Online');
+          setTempColor('#16A34A');
+
+          setHumStatus('Online');
+          setHumColor('#16A34A');
+
+          setAmmoniaStatus('Online');
+          setAmmoniaColor('#16A34A');
+
+          const ppm = ammoniaData?.value ? parseFloat(ammoniaData.value) : 0;
+          if (ppm > 18) {
+            setVentStatus('Active (Ventilating)');
+            setVentColor('#16A34A');
+          } else {
+            setVentStatus('Standby');
+            setVentColor('#CA8A04');
+          }
+        } else {
+          throw new Error('No feed data found');
+        }
+      } catch (error) {
+        console.error('Error checking Adafruit feeds:', error);
+        setIsConnected(false);
+        setSignalStrength(0);
+        setLastSyncTime('Disconnected');
+
+        setTempStatus('Offline');
+        setTempColor('#DC2626');
+
+        setHumStatus('Offline');
+        setHumColor('#DC2626');
+
+        setAmmoniaStatus('Offline');
+        setAmmoniaColor('#DC2626');
+
+        setVentStatus('Standby');
+        setVentColor('#CA8A04');
+      }
+    };
+
+    checkSensorFeeds();
+    const interval = setInterval(checkSensorFeeds, 10000); 
+    return () => clearInterval(interval);
+  }, []);
+
+  // Cloud Wi-Fi Update Handler
+  const handleUpdateCloud = async () => {
+    if (!ssid.trim() || !wifiPassword.trim()) {
+      Alert.alert('Validation Error', 'Please enter both Wi-Fi Name (SSID) and Password.');
+      return;
+    }
+
+    setIsUpdatingCloud(true);
     setTimeout(() => {
-      setIsSyncing(false);
+      setIsUpdatingCloud(false);
+      setWifiModalVisible(false);
       setLastSyncTime('Just now');
-      Alert.alert('Success', 'A.V.I.A.N. Controller synchronized successfully.');
+      Alert.alert('Success', `Updated Wi-Fi credentials (${ssid}) via Cloud!`);
+      setSsid('');
+      setWifiPassword('');
     }, 1500);
   };
 
-  // Validation function para sa pag-reconnect ng device
-  const handleReconnect = () => {
-    setIsReconnecting(true);
+  const handleUpdateLocalAP = async () => {
+    if (!ssid.trim() || !wifiPassword.trim()) {
+      Alert.alert('Validation Error', 'Please enter both Wi-Fi Name (SSID) and Password.');
+      return;
+    }
+
+    setIsUpdatingLocal(true);
     setTimeout(() => {
-      setIsReconnecting(false);
+      setIsUpdatingLocal(false);
+      setWifiModalVisible(false);
       setIsConnected(true);
-      setSignalStrength(85);
-      Alert.alert('Connected', 'Device successfully reconnected to the network.');
+      setSignalStrength(90);
+      setLastSyncTime('Just now');
+      Alert.alert('Connected', `Updated Wi-Fi credentials (${ssid}) via Local AP!`);
+      setSsid('');
+      setWifiPassword('');
     }, 2000);
   };
 
-  // Listahan ng mga sensors na may dynamic validation status
   const sensors = [
-    { name: 'Temperature Sensor', status: isConnected ? 'Online' : 'Offline', color: isConnected ? '#16A34A' : '#DC2626' },
-    { name: 'Humidity Sensor', status: isConnected ? 'Online' : 'Offline', color: isConnected ? '#16A34A' : '#DC2626' },
-    { name: 'Ammonia Sensor', status: isConnected ? 'Online' : 'Offline', color: isConnected ? '#16A34A' : '#DC2626' },
-    { name: 'Ventilation Control', status: isConnected ? 'Active' : 'Standby', color: isConnected ? '#16A34A' : '#CA8A04' },
+    { name: 'Temperature Sensor', status: tempStatus, color: tempColor },
+    { name: 'Humidity Sensor', status: humStatus, color: humColor },
+    { name: 'Ammonia Sensor', status: ammoniaStatus, color: ammoniaColor },
+    { name: 'Ventilation Control', status: ventStatus, color: ventColor },
   ];
 
   return (
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity 
-          onPress={() => router.back()} 
+        <TouchableOpacity
+          onPress={() => router.back()}
           style={styles.backButton}
           activeOpacity={0.7}
         >
@@ -94,36 +203,26 @@ export default function IotDevicesScreen() {
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Signal Strength</Text>
             <View style={styles.signalContainer}>
-              <Wifi size={14} color="#16A34A" style={{ marginRight: 4 }} />
-              <Text style={styles.infoValue}>{signalStrength}% (Stable)</Text>
+              <Wifi size={14} color={isConnected ? '#16A34A' : '#DC2626'} style={{ marginRight: 4 }} />
+              <Text style={styles.infoValue}>{signalStrength}% {isConnected ? '(Stable)' : '(Offline)'}</Text>
             </View>
           </View>
 
-          {/* Action Buttons na may Validation States */}
-          <TouchableOpacity 
-            style={[styles.outlineBtn, isSyncing && { opacity: 0.6 }]} 
-            activeOpacity={0.7}
-            onPress={handleSynchronize}
-            disabled={isSyncing}
+          {/* Action Buttons */}
+          <TouchableOpacity
+            style={styles.primaryBtn}
+            activeOpacity={0.8}
+            onPress={() => setWifiModalVisible(true)}
           >
-            {isSyncing ? (
-              <ActivityIndicator size="small" color="#16A34A" />
-            ) : (
-              <Text style={styles.outlineBtnText}>Synchronize Device</Text>
-            )}
+            <Text style={styles.primaryBtnText}>Update via Cloud (Online)</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity 
-            style={[styles.outlineBtn, isReconnecting && { opacity: 0.6 }]} 
+          <TouchableOpacity
+            style={styles.outlineBtn}
             activeOpacity={0.7}
-            onPress={handleReconnect}
-            disabled={isReconnecting}
+            onPress={() => setWifiModalVisible(true)}
           >
-            {isReconnecting ? (
-              <ActivityIndicator size="small" color="#16A34A" />
-            ) : (
-              <Text style={styles.outlineBtnText}>Reconnect Device</Text>
-            )}
+            <Text style={styles.outlineBtnText}>Update via Local AP (Offline)</Text>
           </TouchableOpacity>
         </View>
 
@@ -140,6 +239,82 @@ export default function IotDevicesScreen() {
           </View>
         ))}
       </ScrollView>
+
+      <Modal
+        visible={wifiModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setWifiModalVisible(false)}
+      >
+        <View style={styles.overlay}>
+          <View style={styles.wifiModalCard}>
+            <View style={styles.wifiModalHeader}>
+              <Text style={styles.wifiModalTitle}>Update ESP32 Wi-Fi</Text>
+              <TouchableOpacity onPress={() => setWifiModalVisible(false)}>
+                <X size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.inputLabel}>Wi-Fi Name (SSID)</Text>
+            <View style={styles.lightInputContainer}>
+              <TextInput
+                style={styles.lightInput}
+                placeholder="Enter SSID"
+                placeholderTextColor="#94A3B8"
+                value={ssid}
+                onChangeText={setSsid}
+                autoCapitalize="none"
+              />
+            </View>
+
+            <Text style={styles.inputLabel}>Wi-Fi Password</Text>
+            <View style={styles.lightInputContainer}>
+              <TextInput
+                style={styles.lightInput}
+                placeholder="Enter Password"
+                placeholderTextColor="#94A3B8"
+                secureTextEntry={!showWifiPassword}
+                value={wifiPassword}
+                onChangeText={setWifiPassword}
+                autoCapitalize="none"
+              />
+              <TouchableOpacity onPress={() => setShowWifiPassword(!showWifiPassword)}>
+                {showWifiPassword ? (
+                  <EyeOff size={18} color="#64748B" />
+                ) : (
+                  <Eye size={18} color="#64748B" />
+                )}
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              style={styles.modalPrimaryBtn}
+              activeOpacity={0.8}
+              onPress={handleUpdateCloud}
+              disabled={isUpdatingCloud || isUpdatingLocal}
+            >
+              {isUpdatingCloud ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={styles.modalPrimaryBtnText}>Update via Cloud (Online)</Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.modalSecondaryBtn}
+              activeOpacity={0.8}
+              onPress={handleUpdateLocalAP}
+              disabled={isUpdatingCloud || isUpdatingLocal}
+            >
+              {isUpdatingLocal ? (
+                <ActivityIndicator size="small" color="#15803D" />
+              ) : (
+                <Text style={styles.modalSecondaryBtnText}>Update via Local AP (Offline)</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -173,15 +348,25 @@ const styles = StyleSheet.create({
   statusBadge: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   dot: { width: 8, height: 8, borderRadius: 4 },
   statusGreen: { fontSize: 12, fontWeight: '600', color: '#16A34A' },
+
+  primaryBtn: {
+    backgroundColor: '#15803D',
+    borderRadius: 8,
+    paddingVertical: 11,
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  primaryBtnText: { color: '#FFFFFF', fontWeight: '600', fontSize: 13 },
   outlineBtn: {
     borderWidth: 1,
     borderColor: '#16A34A',
     borderRadius: 8,
     paddingVertical: 10,
     alignItems: 'center',
-    marginTop: 10,
+    marginTop: 8,
   },
   outlineBtnText: { color: '#16A34A', fontWeight: '600', fontSize: 13 },
+
   sectionTitle: { fontSize: 14, fontWeight: '600', color: '#334155', marginBottom: 10 },
   sensorCard: {
     flexDirection: 'row',
@@ -195,4 +380,84 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   sensorName: { fontSize: 13, fontWeight: '500', color: '#0F172A' },
+
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  wifiModalCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 24,
+    shadowColor: '#000000',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 5,
+  },
+  wifiModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  wifiModalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#0F172A',
+  },
+  inputLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+    marginBottom: 6,
+  },
+  lightInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 14,
+    height: 48,
+    marginBottom: 14,
+  },
+  lightInput: {
+    flex: 1,
+    color: '#0F172A',
+    fontSize: 14,
+  },
+  modalPrimaryBtn: {
+    backgroundColor: '#15803D',
+    borderRadius: 12,
+    height: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 8,
+    marginBottom: 10,
+  },
+  modalPrimaryBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  modalSecondaryBtn: {
+    backgroundColor: '#DCFCE7',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: 12,
+    height: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalSecondaryBtnText: {
+    color: '#15803D',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
 });

@@ -1,7 +1,11 @@
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useEffect, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Card, ScreenLayout } from '../../components/ScreenLayout';
+
+const AIO_USERNAME = 'systemprototype1017';
+const AIO_KEY = process.env.EXPO_PUBLIC_AIO_KEY || '';
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -20,9 +24,67 @@ export default function HomeScreen() {
   const healthyPct = totalChicks > 0 ? Math.round((healthyCount / totalChicks) * 100) : 0;
   const riskPct = totalChicks > 0 ? Math.round((riskCount / totalChicks) * 100) : 0;
 
-  const environmentData = { temperature: '32.5°C', humidity: '65%', airQuality: 'Good' };
+  const [environmentData, setEnvironmentData] = useState({
+    temperature: '--°C',
+    humidity: '--%',
+    airQuality: 'Loading...',
+    airQualityColor: '#6B7280',
+    ammoniaPpm: 0.0,
+  });
 
-  // Today's totals: feed in grams, water in ml. Sample values, keep in sync with the Feed & Water screen.
+  useEffect(() => {
+    const fetchAdafruitData = async () => {
+      const headers: HeadersInit = AIO_KEY ? { 'X-AIO-Key': AIO_KEY } : {};
+
+      try {
+        const [tempRes, humRes, ammoniaRes] = await Promise.all([
+          fetch(`https://io.adafruit.com/api/v2/${AIO_USERNAME}/feeds/temp/data/last`, { headers }),
+          fetch(`https://io.adafruit.com/api/v2/${AIO_USERNAME}/feeds/hum/data/last`, { headers }),
+          fetch(`https://io.adafruit.com/api/v2/${AIO_USERNAME}/feeds/ammonia/data/last`, { headers }),
+        ]);
+
+        const tempData = await tempRes.json();
+        const humData = await humRes.json();
+        const ammoniaData = await ammoniaRes.json();
+
+        const tempVal = tempData?.value ? `${parseFloat(tempData.value).toFixed(1)}°C` : '--°C';
+        const humVal = humData?.value ? `${parseFloat(humData.value).toFixed(1)}%` : '--%';
+        const ppmVal = ammoniaData?.value ? parseFloat(ammoniaData.value) : 0.0;
+
+        let quality = 'Good';
+        let color = '#2D6A4F';
+
+        if (ppmVal > 18) {
+          quality = 'Poor / Hazardous';
+          color = '#DC2626'; 
+        } else if (ppmVal > 10) {
+          quality = 'Moderate';
+          color = '#D97706'; 
+        }
+
+        setEnvironmentData({
+          temperature: tempVal,
+          humidity: humVal,
+          airQuality: quality,
+          airQualityColor: color,
+          ammoniaPpm: ppmVal,
+        });
+      } catch (error) {
+        console.error('Error fetching Adafruit IO feeds:', error);
+        setEnvironmentData((prev) => ({
+          ...prev,
+          airQuality: 'Offline',
+          airQualityColor: '#DC2626',
+        }));
+      }
+    };
+
+    fetchAdafruitData();
+
+    const interval = setInterval(fetchAdafruitData, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
   const feedWaterData = { feedG: 85, waterMl: 170, fcr: 1.43 };
 
   return (
@@ -60,7 +122,6 @@ export default function HomeScreen() {
         </View>
       </Card>
 
-      {/* ---------- Feed & Water (middle) ---------- */}
       <Card>
         <TouchableOpacity activeOpacity={0.7} onPress={() => router.push('/feed-water' as any)}>
           <View style={styles.headerRow}>
@@ -96,7 +157,6 @@ export default function HomeScreen() {
         </TouchableOpacity>
       </Card>
 
-      {/* ---------- Environment ---------- */}
       <Card>
         <Text style={styles.sectionTitle}>Environment</Text>
         <View style={styles.row}>
@@ -113,12 +173,13 @@ export default function HomeScreen() {
           <View style={styles.tile}>
             <MaterialCommunityIcons name="weather-windy" size={22} color="#15803D" />
             <Text style={styles.tileLabel}>Air Quality</Text>
-            <Text style={[styles.tileValue, { color: '#2D6A4F' }]}>{environmentData.airQuality}</Text>
+            <Text style={[styles.tileValue, { color: environmentData.airQualityColor }]}>
+              {environmentData.airQuality}
+            </Text>
           </View>
         </View>
       </Card>
 
-      {/* ---------- Devices ---------- */}
       <Card>
         <TouchableOpacity activeOpacity={0.7} onPress={() => router.push('/device-control' as any)}>
           <View style={styles.headerRow}>
@@ -190,7 +251,7 @@ const styles = StyleSheet.create({
     borderColor: '#F3F4F6',
   },
   tileLabel: { fontSize: 12, color: '#6B7280', marginTop: 6 },
-  tileValue: { fontSize: 15, fontWeight: 'bold', color: '#1F2937', marginTop: 2 },
+  tileValue: { fontSize: 15, fontWeight: 'bold', color: '#1F2937', marginTop: 2, textAlign: 'center' },
 
   normalBadge: {
     flexDirection: 'row',
