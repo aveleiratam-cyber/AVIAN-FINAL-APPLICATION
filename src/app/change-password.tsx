@@ -1,16 +1,36 @@
 import { supabase } from '../config/supabase';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, Check, Eye, EyeOff } from 'lucide-react-native';
+import { ArrowLeft, Check, Eye, EyeOff, X, AlertCircle, CheckCircle2 } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 export default function ChangePasswordScreen() {
   const router = useRouter();
 
   const [isGoogleUser, setIsGoogleUser] = useState(false);
+  const [userEmail, setUserEmail] = useState('');
+  
+  // Modals visibility
+  const [otpModalVisible, setOtpModalVisible] = useState(false);
+  const [appModalVisible, setAppModalVisible] = useState(false);
+  const [modalConfig, setModalConfig] = useState({
+    title: '',
+    message: '',
+    type: 'error' as 'error' | 'success',
+    onClose: undefined as (() => void) | undefined,
+  });
+
+  // Form Inputs
   const [currentPassword, setCurrentPassword] = useState('');
+  const [otpCode, setOtpCode] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+
+  // Touched States for inline warnings
+  const [currentTouched, setCurrentTouched] = useState(false);
+  const [newTouched, setNewTouched] = useState(false);
+  const [confirmTouched, setConfirmTouched] = useState(false);
+  const [otpTouched, setOtpTouched] = useState(false);
 
   // Password visibility toggles
   const [showCurrent, setShowCurrent] = useState(false);
@@ -18,15 +38,23 @@ export default function ChangePasswordScreen() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // Detect whether user logged in via Google OAuth
+  // Helper to trigger styled modals instead of Alert.alert
+  const showAlertModal = (title: string, message: string, type: 'error' | 'success' = 'error', onClose?: () => void) => {
+    setModalConfig({ title, message, type, onClose });
+    setAppModalVisible(true);
+  };
+
+  // Detect whether user logged in via Google OAuth and grab email
   useEffect(() => {
     async function checkUserProvider() {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
+        if (user.email) {
+          setUserEmail(user.email);
+        }
         const googleIdentity = user.identities?.find(
           (identity) => identity.provider === 'google'
         );
-        // If Google identity is present and user only has 1 identity without prior local password
         if (googleIdentity && user.identities?.length === 1) {
           setIsGoogleUser(true);
         }
@@ -39,55 +67,108 @@ export default function ChangePasswordScreen() {
   const hasMinLength = newPassword.length >= 8;
   const hasNumber = /\d/.test(newPassword);
   const hasUppercase = /[A-Z]/.test(newPassword);
+  const passwordsMatch = newPassword && confirmPassword && newPassword === confirmPassword;
+  const isSameAsOld = !isGoogleUser && currentPassword && newPassword && currentPassword === newPassword;
 
-  const handleSave = async () => {
+  const handleRequestOtp = async () => {
+    if (!isGoogleUser) {
+      setCurrentTouched(true);
+    }
+    setNewTouched(true);
+    setConfirmTouched(true);
+
     if (!isGoogleUser && !currentPassword) {
-      Alert.alert('Error', 'Please enter your current password.');
       return;
     }
 
-    if (!newPassword || !confirmPassword) {
-      Alert.alert('Error', 'Please fill in all required password fields.');
+    if (!newPassword || !confirmPassword || !hasMinLength || !hasNumber || !hasUppercase || !passwordsMatch || isSameAsOld) {
       return;
     }
 
-    if (!isGoogleUser && currentPassword === newPassword) {
-      Alert.alert('Error', 'New password must be different from your current password.');
-      return;
-    }
-
-    if (!hasMinLength || !hasNumber || !hasUppercase) {
-      Alert.alert('Weak Password', 'New password must meet all requirements.');
-      return;
-    }
-
-    if (newPassword !== confirmPassword) {
-      Alert.alert('Error', 'New passwords do not match.');
+    if (!userEmail) {
+      showAlertModal('Error', 'Unable to find user email address.');
       return;
     }
 
     setLoading(true);
     try {
-      const { error } = await supabase.auth.updateUser({
-        password: newPassword,
-      });
+      if (!isGoogleUser) {
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email: userEmail,
+          password: currentPassword,
+        });
+
+        if (signInError) {
+          setLoading(false);
+          setCurrentTouched(true);
+          showAlertModal('Authentication Failed', 'The current password you entered is incorrect.');
+          return;
+        }
+      }
+
+      const { error } = await supabase.auth.resetPasswordForEmail(userEmail);
 
       if (error) {
-        Alert.alert('Error', error.message);
+        showAlertModal('Error', error.message);
+        setLoading(false);
         return;
       }
 
-      Alert.alert(
+      setLoading(false);
+      setOtpCode('');
+      setOtpTouched(false);
+      setOtpModalVisible(true);
+    } catch (err: any) {
+      setLoading(false);
+      showAlertModal('Error', err.message || 'An error occurred while processing your request.');
+    }
+  };
+
+  const handleVerifyAndSave = async () => {
+    setOtpTouched(true);
+
+    if (!otpCode.trim() || otpCode.trim().length !== 6) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { error: verifyError } = await supabase.auth.verifyOtp({
+        email: userEmail,
+        token: otpCode.trim(),
+        type: 'recovery',
+      });
+
+      if (verifyError) {
+        showAlertModal('Verification Failed', verifyError.message);
+        setLoading(false);
+        return;
+      }
+
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+
+      if (updateError) {
+        showAlertModal('Error', updateError.message);
+        setLoading(false);
+        return;
+      }
+
+      setLoading(false);
+      setOtpModalVisible(false);
+
+      showAlertModal(
         'Success',
         isGoogleUser 
-          ? 'Password set successfully! You can now log in using either Google or Email/Password.'
+          ? 'Password set successfully! Your account is verified and you can now log in using either Google or Email/Password.'
           : 'Your password has been successfully changed.',
-        [{ text: 'OK', onPress: () => router.back() }]
+        'success',
+        () => router.back()
       );
     } catch (err: any) {
-      Alert.alert('Error', err.message || 'An error occurred while updating the password.');
-    } finally {
       setLoading(false);
+      showAlertModal('Error', err.message || 'An error occurred while updating the password.');
     }
   };
 
@@ -105,25 +186,30 @@ export default function ChangePasswordScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        {/* Banner Notice for Google-only users */}
         {isGoogleUser && (
           <View style={styles.googleNotice}>
             <Text style={styles.googleNoticeText}>
-              You currently log in using Google. Setting a password allows you to log in with email and password as well.
+              You currently log in using Google. Setting a password allows you to log in with email and password as well. An OTP code will be sent to <Text style={{ fontWeight: 'bold' }}>{userEmail}</Text> to verify setup.
             </Text>
           </View>
         )}
 
-        {/* Current Password Field (Only for Email / Resend Users) */}
         {!isGoogleUser && (
-          <>
+          <View style={styles.inputGroup}>
             <Text style={styles.label}>Current Password</Text>
-            <View style={styles.inputContainer}>
+            <View style={[
+              styles.inputContainer,
+              currentTouched && !currentPassword && styles.inputError
+            ]}>
               <TextInput
                 style={styles.input}
                 secureTextEntry={!showCurrent}
                 value={currentPassword}
-                onChangeText={setCurrentPassword}
+                onChangeText={(text) => {
+                  setCurrentPassword(text);
+                  if (text) setCurrentTouched(false);
+                }}
+                onBlur={() => setCurrentTouched(true)}
                 placeholder="Enter current password"
                 placeholderTextColor="#94A3B8"
               />
@@ -135,95 +221,229 @@ export default function ChangePasswordScreen() {
                 )}
               </TouchableOpacity>
             </View>
-          </>
+            {currentTouched && !currentPassword && (
+              <Text style={styles.errorText}>Current password is required</Text>
+            )}
+          </View>
         )}
-
-        {/* New Password Field */}
-        <Text style={styles.label}>
-          {isGoogleUser ? 'Create Password' : 'New Password'}
-        </Text>
-        <View style={styles.inputContainer}>
-          <TextInput
-            style={styles.input}
-            secureTextEntry={!showNew}
-            value={newPassword}
-            onChangeText={setNewPassword}
-            placeholder="Enter new password"
-            placeholderTextColor="#94A3B8"
-          />
-          <TouchableOpacity onPress={() => setShowNew(!showNew)}>
-            {showNew ? (
-              <EyeOff size={20} color="#64748B" />
-            ) : (
-              <Eye size={20} color="#64748B" />
-            )}
-          </TouchableOpacity>
-        </View>
-
-        {/* Password Requirements Checklist */}
-        <View style={styles.requirementsContainer}>
-          <Text style={styles.requirementsTitle}>Password must contain:</Text>
-          
-          <View style={styles.requirementRow}>
-            <View style={[styles.circleIndicator, hasMinLength && styles.circleValid]}>
-              {hasMinLength && <Check size={8} color="#FFFFFF" />}
-            </View>
-            <Text style={[styles.requirementText, hasMinLength && styles.validText]}>
-              At least 8 characters
-            </Text>
+        <View style={styles.inputGroup}>
+          <Text style={styles.label}>
+            {isGoogleUser ? 'Create Password' : 'New Password'}
+          </Text>
+          <View style={[
+            styles.inputContainer,
+            newTouched && (!newPassword || !hasMinLength || !hasNumber || !hasUppercase || isSameAsOld) && styles.inputError
+          ]}>
+            <TextInput
+              style={styles.input}
+              secureTextEntry={!showNew}
+              value={newPassword}
+              onChangeText={(text) => {
+                setNewPassword(text);
+                if (text) setNewTouched(false);
+              }}
+              onBlur={() => setNewTouched(true)}
+              placeholder={isGoogleUser ? "Enter new account password" : "Enter new password"}
+              placeholderTextColor="#94A3B8"
+            />
+            <TouchableOpacity onPress={() => setShowNew(!showNew)}>
+              {showNew ? (
+                <EyeOff size={20} color="#64748B" />
+              ) : (
+                <Eye size={20} color="#64748B" />
+              )}
+            </TouchableOpacity>
           </View>
 
-          <View style={styles.requirementRow}>
-            <View style={[styles.circleIndicator, hasNumber && styles.circleValid]}>
-              {hasNumber && <Check size={8} color="#FFFFFF" />}
+          {isSameAsOld && (
+            <Text style={styles.errorText}>New password must be different from your current password</Text>
+          )}
+          <View style={styles.requirementsContainer}>
+            <Text style={styles.requirementsTitle}>Password must contain:</Text>
+            
+            <View style={styles.requirementRow}>
+              <View style={[styles.circleIndicator, hasMinLength && styles.circleValid]}>
+                {hasMinLength && <Check size={8} color="#FFFFFF" />}
+              </View>
+              <Text style={[styles.requirementText, hasMinLength && styles.validText]}>
+                At least 8 characters
+              </Text>
             </View>
-            <Text style={[styles.requirementText, hasNumber && styles.validText]}>
-              At least 1 number
-            </Text>
-          </View>
 
-          <View style={styles.requirementRow}>
-            <View style={[styles.circleIndicator, hasUppercase && styles.circleValid]}>
-              {hasUppercase && <Check size={8} color="#FFFFFF" />}
+            <View style={styles.requirementRow}>
+              <View style={[styles.circleIndicator, hasNumber && styles.circleValid]}>
+                {hasNumber && <Check size={8} color="#FFFFFF" />}
+              </View>
+              <Text style={[styles.requirementText, hasNumber && styles.validText]}>
+                At least 1 number
+              </Text>
             </View>
-            <Text style={[styles.requirementText, hasUppercase && styles.validText]}>
-              At least 1 uppercase letter
-            </Text>
+
+            <View style={styles.requirementRow}>
+              <View style={[styles.circleIndicator, hasUppercase && styles.circleValid]}>
+                {hasUppercase && <Check size={8} color="#FFFFFF" />}
+              </View>
+              <Text style={[styles.requirementText, hasUppercase && styles.validText]}>
+                At least 1 uppercase letter
+              </Text>
+            </View>
           </View>
         </View>
-
-        {/* Confirm New Password Field */}
-        <Text style={styles.label}>Confirm New Password</Text>
-        <View style={styles.inputContainer}>
-          <TextInput
-            style={styles.input}
-            secureTextEntry={!showConfirm}
-            value={confirmPassword}
-            onChangeText={setConfirmPassword}
-            placeholder="Re-enter new password"
-            placeholderTextColor="#94A3B8"
-          />
-          <TouchableOpacity onPress={() => setShowConfirm(!showConfirm)}>
-            {showConfirm ? (
-              <EyeOff size={20} color="#64748B" />
-            ) : (
-              <Eye size={20} color="#64748B" />
-            )}
-          </TouchableOpacity>
+        <View style={styles.inputGroup}>
+          <Text style={styles.label}>
+            {isGoogleUser ? 'Confirm Created Password' : 'Confirm New Password'}
+          </Text>
+          <View style={[
+            styles.inputContainer,
+            confirmTouched && (!confirmPassword || newPassword !== confirmPassword) && styles.inputError
+          ]}>
+            <TextInput
+              style={styles.input}
+              secureTextEntry={!showConfirm}
+              value={confirmPassword}
+              onChangeText={(text) => {
+                setConfirmPassword(text);
+                if (text) setConfirmTouched(false);
+              }}
+              onBlur={() => setConfirmTouched(true)}
+              placeholder="Re-enter password"
+              placeholderTextColor="#94A3B8"
+            />
+            <TouchableOpacity onPress={() => setShowConfirm(!showConfirm)}>
+              {showConfirm ? (
+                <EyeOff size={20} color="#64748B" />
+              ) : (
+                <Eye size={20} color="#64748B" />
+              )}
+            </TouchableOpacity>
+          </View>
+          {confirmTouched && !confirmPassword && (
+            <Text style={styles.errorText}>Password confirmation is required</Text>
+          )}
+          {confirmTouched && confirmPassword && newPassword !== confirmPassword && (
+            <Text style={styles.errorText}>Passwords do not match</Text>
+          )}
         </View>
-
-        {/* Save Changes Button */}
         <TouchableOpacity 
           style={[styles.saveButton, loading && { opacity: 0.7 }]} 
           activeOpacity={0.8}
-          onPress={handleSave}
+          onPress={handleRequestOtp}
           disabled={loading}
         >
           <Text style={styles.saveButtonText}>
-            {loading ? 'Saving...' : 'Save Changes'}
+            {loading ? 'Checking & Sending Code...' : 'Continue to Verification'}
           </Text>
         </TouchableOpacity>
       </ScrollView>
+      <Modal
+        visible={otpModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setOtpModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>ENTER SECURITY CODE</Text>
+              <TouchableOpacity
+                onPress={() => setOtpModalVisible(false)}
+                activeOpacity={0.7}
+              >
+                <X size={20} color="#0F172A" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.modalSubtitle}>
+              We sent a 6-digit verification code to <Text style={{ fontWeight: '600', color: '#0F172A' }}>{userEmail}</Text> to verify your identity before saving your password.
+            </Text>
+
+            <Text style={styles.inputLabel}>6-Digit OTP Code</Text>
+            <TextInput
+              style={[
+                styles.modalTextInput,
+                otpTouched && (!otpCode.trim() || otpCode.length !== 6) && styles.inputError
+              ]}
+              placeholder="123456"
+              placeholderTextColor="#94A3B8"
+              value={otpCode}
+              onChangeText={(text) => {
+                setOtpCode(text);
+                if (text) setOtpTouched(false);
+              }}
+              onBlur={() => setOtpTouched(true)}
+              keyboardType="number-pad"
+              maxLength={6}
+            />
+            {otpTouched && (!otpCode.trim() || otpCode.length !== 6) && (
+              <Text style={[styles.errorText, { marginBottom: 12 }]}>Valid 6-digit code is required</Text>
+            )}
+
+            <TouchableOpacity
+              style={[styles.submitButton, loading && { opacity: 0.7 }]}
+              onPress={handleVerifyAndSave}
+              disabled={loading}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.submitButtonText}>
+                {loading ? 'VERIFYING...' : 'CONFIRM & SAVE'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.resendModalBtn}
+              onPress={handleRequestOtp}
+            >
+              <Text style={styles.resendModalText}>Resend Code</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+      <Modal
+        visible={appModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setAppModalVisible(false);
+          if (modalConfig.onClose) modalConfig.onClose();
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.alertHeaderRow}>
+              {modalConfig.type === 'error' ? (
+                <AlertCircle size={24} color="#EF4444" style={{ marginRight: 8 }} />
+              ) : (
+                <CheckCircle2 size={24} color="#16A34A" style={{ marginRight: 8 }} />
+              )}
+              <Text style={[styles.modalTitle, { flex: 1, marginTop: 2 }]}>
+                {modalConfig.title.toUpperCase()}
+              </Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setAppModalVisible(false);
+                  if (modalConfig.onClose) modalConfig.onClose();
+                }}
+                activeOpacity={0.7}
+              >
+                <X size={20} color="#0F172A" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.modalSubtitle}>{modalConfig.message}</Text>
+
+            <TouchableOpacity
+              style={styles.submitButton}
+              onPress={() => {
+                setAppModalVisible(false);
+                if (modalConfig.onClose) modalConfig.onClose();
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.submitButtonText}>OK</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -267,12 +487,15 @@ const styles = StyleSheet.create({
     color: '#166534',
     lineHeight: 18,
   },
+  inputGroup: {
+    marginBottom: 12,
+  },
   label: {
     fontSize: 14,
     fontWeight: '600',
     color: '#0F172A',
     marginBottom: 8,
-    marginTop: 12,
+    marginTop: 8,
   },
   inputContainer: {
     flexDirection: 'row',
@@ -284,14 +507,25 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     height: 50,
   },
+  inputError: {
+    borderColor: '#EF4444',
+    backgroundColor: '#FEF2F2',
+  },
   input: {
     flex: 1,
     fontSize: 15,
     color: '#0F172A',
   },
+  errorText: {
+    color: '#EF4444',
+    fontSize: 12,
+    marginTop: 4,
+    marginLeft: 4,
+    fontWeight: '500',
+  },
   requirementsContainer: {
     marginTop: 8,
-    marginBottom: 8,
+    marginBottom: 4,
     paddingLeft: 4,
   },
   requirementsTitle: {
@@ -333,7 +567,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 30,
+    marginTop: 24,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -344,5 +578,87 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 15,
     fontWeight: 'bold',
+  },
+  // Modal Styling matching app theme
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000000',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 5,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  alertHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  modalTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#0F172A',
+    letterSpacing: 0.5,
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: '#64748B',
+    marginBottom: 20,
+    lineHeight: 18,
+  },
+  inputLabel: {
+    fontSize: 12,
+    color: '#64748B',
+    marginBottom: 6,
+    fontWeight: '600',
+  },
+  modalTextInput: {
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: '#0F172A',
+    marginBottom: 4,
+    backgroundColor: '#F8FAFC',
+    textAlign: 'center',
+    letterSpacing: 4,
+  },
+  submitButton: {
+    backgroundColor: '#15803D',
+    borderRadius: 10,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  submitButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: 'bold',
+    letterSpacing: 1,
+  },
+  resendModalBtn: {
+    marginTop: 14,
+    alignItems: 'center',
+  },
+  resendModalText: {
+    color: '#15803D',
+    fontSize: 13,
+    fontWeight: '600',
   },
 });

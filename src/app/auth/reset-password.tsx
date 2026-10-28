@@ -1,4 +1,4 @@
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import {
   Alert,
@@ -13,20 +13,18 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../config/supabase';
 
 export default function ResetPasswordScreen() {
-  const [passwordVisible, setPasswordVisible] =
-    useState(false);
+  const { email } = useLocalSearchParams<{ email: string }>();
 
-  const [confirmPasswordVisible, setConfirmPasswordVisible] =
-    useState(false);
+  const [otpCode, setOtpCode] = useState('');
+  const [passwordVisible, setPasswordVisible] = useState(false);
+  const [confirmPasswordVisible, setConfirmPasswordVisible] = useState(false);
 
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
-  const [passwordTouched, setPasswordTouched] =
-    useState(false);
-
-  const [confirmPasswordTouched, setConfirmPasswordTouched] =
-    useState(false);
+  const [otpTouched, setOtpTouched] = useState(false);
+  const [passwordTouched, setPasswordTouched] = useState(false);
+  const [confirmPasswordTouched, setConfirmPasswordTouched] = useState(false);
 
   const passwordHasMinLength = password.length >= 8;
   const passwordHasUppercase = /[A-Z]/.test(password);
@@ -42,8 +40,14 @@ export default function ResetPasswordScreen() {
     passwordHasSpecial;
 
   const handleContinue = async () => {
+    setOtpTouched(true);
     setPasswordTouched(true);
     setConfirmPasswordTouched(true);
+
+    if (!otpCode.trim() || otpCode.length !== 6) {
+      Alert.alert('Validation Error', 'Please enter the valid 6-digit code sent to your email.');
+      return;
+    }
 
     if (
       !passwordIsValid ||
@@ -54,13 +58,23 @@ export default function ResetPasswordScreen() {
     }
 
     try {
-      // Update the user's password via Supabase Auth
-      const { error } = await supabase.auth.updateUser({
+      const { error: verifyError } = await supabase.auth.verifyOtp({
+        email: email || '',
+        token: otpCode.trim(),
+        type: 'recovery',
+      });
+
+      if (verifyError) {
+        Alert.alert('Verification Failed', verifyError.message);
+        return;
+      }
+
+      const { error: updateError } = await supabase.auth.updateUser({
         password: password,
       });
 
-      if (error) {
-        Alert.alert('Update Failed', error.message);
+      if (updateError) {
+        Alert.alert('Update Failed', updateError.message);
         return;
       }
 
@@ -75,7 +89,6 @@ export default function ResetPasswordScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.content}>
-        {/* BACK */}
         <TouchableOpacity
           onPress={() => router.back()}
           activeOpacity={0.7}
@@ -88,17 +101,42 @@ export default function ResetPasswordScreen() {
           />
         </TouchableOpacity>
 
-        {/* TITLE */}
         <Text style={styles.title}>
           Set a new password
         </Text>
 
         <Text style={styles.description}>
-          Create a new password. Ensure it differs form
-          {'\n'}previous ones for security
+          Enter the 6-digit code sent to {email || 'your email'} and create a new secure password.
         </Text>
 
-        {/* PASSWORD */}
+        <View style={styles.inputGroup}>
+          <Text style={styles.label}>6-Digit OTP Code</Text>
+
+          <View
+            style={[
+              styles.inputWrapper,
+              otpTouched && !otpCode.trim() && styles.inputError,
+            ]}
+          >
+            <TextInput
+              style={styles.input}
+              placeholder="123456"
+              placeholderTextColor="#AAAAAA"
+              keyboardType="number-pad"
+              maxLength={6}
+              value={otpCode}
+              onChangeText={setOtpCode}
+              onBlur={() => setOtpTouched(true)}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </View>
+
+          {otpTouched && !otpCode.trim() && (
+            <Text style={styles.errorText}>OTP code is required</Text>
+          )}
+        </View>
+
         <View style={styles.inputGroup}>
           <Text style={styles.label}>Password</Text>
 
@@ -143,7 +181,6 @@ export default function ResetPasswordScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* REQUIREMENTS */}
           {passwordTouched && (
             <View style={styles.requirements}>
               <Text style={styles.requirementTitle}>
@@ -208,7 +245,6 @@ export default function ResetPasswordScreen() {
           )}
         </View>
 
-        {/* CONFIRM PASSWORD */}
         <View style={styles.inputGroup}>
           <Text style={styles.label}>
             Confirm Password
@@ -273,7 +309,6 @@ export default function ResetPasswordScreen() {
             )}
         </View>
 
-        {/* CONTINUE */}
         <TouchableOpacity
           style={styles.continueButton}
           onPress={handleContinue}
@@ -293,13 +328,11 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-
   content: {
     flex: 1,
     paddingHorizontal: 15,
     paddingTop: 10,
   },
-
   backButton: {
     width: 35,
     height: 35,
@@ -307,26 +340,22 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     marginBottom: 5,
   },
-
   title: {
     fontSize: 22,
     fontWeight: '800',
     color: '#111111',
     marginTop: 2,
   },
-
   description: {
     fontSize: 14,
     lineHeight: 21,
     color: '#555555',
     marginTop: 7,
-    marginBottom: 28,
+    marginBottom: 20,
   },
-
   inputGroup: {
-    marginBottom: 17,
+    marginBottom: 14,
   },
-
   label: {
     fontSize: 13,
     fontWeight: '600',
@@ -334,7 +363,6 @@ const styles = StyleSheet.create({
     marginLeft: 15,
     marginBottom: 7,
   },
-
   inputWrapper: {
     height: 44,
     borderWidth: 1.5,
@@ -345,56 +373,47 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     backgroundColor: '#FFFFFF',
   },
-
   inputError: {
     borderColor: '#FF3B30',
   },
-
   input: {
     flex: 1,
     height: '100%',
     fontSize: 13,
     color: '#333333',
   },
-
   requirements: {
     marginTop: 5,
     marginLeft: 15,
   },
-
   requirementTitle: {
     fontSize: 11,
     color: '#777777',
     fontWeight: '600',
     marginBottom: 2,
   },
-
   requirement: {
     fontSize: 10,
     color: '#FF3B30',
     marginTop: 1,
   },
-
   requirementValid: {
     color: '#15803D',
   },
-
   errorText: {
     color: '#FF3B30',
     fontSize: 11,
     marginTop: 4,
     marginLeft: 15,
   },
-
   continueButton: {
     height: 45,
     backgroundColor: '#15803D',
     borderRadius: 9,
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 2,
+    marginTop: 10,
   },
-
   continueText: {
     color: '#FFFFFF',
     fontSize: 12,

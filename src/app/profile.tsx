@@ -31,7 +31,11 @@ export default function ProfileScreen() {
 
   const [firstNameInput, setFirstNameInput] = useState('');
   const [lastNameInput, setLastNameInput] = useState('');
+  
+  // Email & OTP States
   const [emailInput, setEmailInput] = useState('');
+  const [otpInput, setOtpInput] = useState('');
+  const [pendingEmailVerification, setPendingEmailVerification] = useState(false);
 
   const [successModalVisible, setSuccessModalVisible] = useState(false);
 
@@ -100,7 +104,6 @@ export default function ProfileScreen() {
     const updatedFullName = `${newFirstName} ${newLastName}`;
 
     try {
-      // Update user metadata in Supabase Auth
       const { error } = await supabase.auth.updateUser({
         data: {
           first_name: newFirstName,
@@ -129,22 +132,15 @@ export default function ProfileScreen() {
     }
   };
 
-  const handleSaveEmail = async () => {
+  const handleRequestEmailChange = async () => {
     if (!emailInput.trim()) {
-      Alert.alert(
-        'Validation Error',
-        'Email address cannot be empty.'
-      );
+      Alert.alert('Validation Error', 'Email address cannot be empty.');
       return;
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
     if (!emailRegex.test(emailInput.trim())) {
-      Alert.alert(
-        'Invalid Email',
-        'Please enter a valid email address (e.g., example@gmail.com).'
-      );
+      Alert.alert('Invalid Email', 'Please enter a valid email address.');
       return;
     }
 
@@ -156,17 +152,46 @@ export default function ProfileScreen() {
       });
 
       if (error) {
-        Alert.alert('Update Failed', error.message);
+        Alert.alert('Request Failed', error.message);
+        return;
+      }
+
+      setPendingEmailVerification(true);
+      Alert.alert('OTP Sent', `A verification code has been sent to ${newEmail}`);
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'An unexpected error occurred.');
+    }
+  };
+
+  const handleVerifyEmailOtp = async () => {
+    if (!otpInput.trim() || otpInput.trim().length !== 6) {
+      Alert.alert('Validation Error', 'Please enter the valid 6-digit OTP code.');
+      return;
+    }
+
+    const newEmail = emailInput.trim();
+
+    try {
+      const { error } = await supabase.auth.verifyOtp({
+        email: newEmail,
+        token: otpInput.trim(),
+        type: 'email_change', 
+      });
+
+      if (error) {
+        Alert.alert('Verification Failed', error.message);
         return;
       }
 
       setEmail(newEmail);
       setIsEditingEmail(false);
       setEmailInput('');
+      setOtpInput('');
+      setPendingEmailVerification(false);
 
       setSuccessMessage({
-        title: 'Email Updated',
-        subtitle: 'Please check your new email inbox for confirmation links if required.',
+        title: 'Email Updated Successfully',
+        subtitle: 'Your email address has been successfully changed and verified.',
       });
 
       setSuccessModalVisible(true);
@@ -218,16 +243,12 @@ export default function ProfileScreen() {
         <View style={styles.infoRow}>
           <View style={styles.infoTextContainer}>
             <Text style={styles.label}>Full Name</Text>
-
-            <Text style={styles.value}>
-              {fullName}
-            </Text>
+            <Text style={styles.value}>{fullName}</Text>
           </View>
 
           <TouchableOpacity
             onPress={() => {
               const nameParts = fullName.trim().split(' ');
-
               setFirstNameInput(nameParts[0] || '');
               setLastNameInput(nameParts.slice(1).join(' ') || '');
               setIsEditingName(true);
@@ -245,11 +266,7 @@ export default function ProfileScreen() {
         <View style={styles.infoRow}>
           <View style={styles.infoTextContainer}>
             <Text style={styles.label}>Email Address</Text>
-
-            <Text
-              style={styles.value}
-              numberOfLines={1}
-            >
+            <Text style={styles.value} numberOfLines={1}>
               {email}
             </Text>
           </View>
@@ -257,6 +274,8 @@ export default function ProfileScreen() {
           <TouchableOpacity
             onPress={() => {
               setEmailInput(email);
+              setOtpInput('');
+              setPendingEmailVerification(false);
               setIsEditingEmail(true);
             }}
             style={styles.editIconBtn}
@@ -279,10 +298,7 @@ export default function ProfileScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>
-                EDIT YOUR FULL NAME
-              </Text>
-
+              <Text style={styles.modalTitle}>EDIT YOUR FULL NAME</Text>
               <TouchableOpacity
                 onPress={() => setIsEditingName(false)}
                 activeOpacity={0.7}
@@ -291,10 +307,7 @@ export default function ProfileScreen() {
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.inputLabel}>
-              First Name
-            </Text>
-
+            <Text style={styles.inputLabel}>First Name</Text>
             <TextInput
               style={styles.textInput}
               placeholder="First Name"
@@ -304,10 +317,7 @@ export default function ProfileScreen() {
               autoCapitalize="words"
             />
 
-            <Text style={styles.inputLabel}>
-              Last Name
-            </Text>
-
+            <Text style={styles.inputLabel}>Last Name</Text>
             <TextInput
               style={styles.textInput}
               placeholder="Last Name"
@@ -322,62 +332,96 @@ export default function ProfileScreen() {
               onPress={handleSaveName}
               activeOpacity={0.8}
             >
-              <Text style={styles.submitButtonText}>
-                SUBMIT
-              </Text>
+              <Text style={styles.submitButtonText}>SUBMIT</Text>
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
 
       {/* =========================
-          EDIT EMAIL MODAL
+          EDIT EMAIL MODAL (WITH OTP)
       ========================= */}
       <Modal
         visible={isEditingEmail}
         transparent
         animationType="fade"
-        onRequestClose={() => setIsEditingEmail(false)}
+        onRequestClose={() => {
+          setIsEditingEmail(false);
+          setPendingEmailVerification(false);
+        }}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
-                EDIT EMAIL ADDRESS
+                {!pendingEmailVerification ? 'EDIT EMAIL ADDRESS' : 'ENTER 6-DIGIT CODE'}
               </Text>
-
               <TouchableOpacity
-                onPress={() => setIsEditingEmail(false)}
+                onPress={() => {
+                  setIsEditingEmail(false);
+                  setPendingEmailVerification(false);
+                }}
                 activeOpacity={0.7}
               >
                 <X size={20} color="#0F172A" />
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.inputLabel}>
-              Email Address
-            </Text>
+            {!pendingEmailVerification ? (
+              <>
+                <Text style={styles.inputLabel}>New Email Address</Text>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Enter email address"
+                  placeholderTextColor="#94A3B8"
+                  value={emailInput}
+                  onChangeText={setEmailInput}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
 
-            <TextInput
-              style={styles.textInput}
-              placeholder="Enter email address"
-              placeholderTextColor="#94A3B8"
-              value={emailInput}
-              onChangeText={setEmailInput}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
+                <TouchableOpacity
+                  style={styles.submitButton}
+                  onPress={handleRequestEmailChange}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.submitButtonText}>SEND CODE</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <Text style={styles.subtitleModalText}>
+                  We sent a verification code to {emailInput}
+                </Text>
 
-            <TouchableOpacity
-              style={styles.submitButton}
-              onPress={handleSaveEmail}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.submitButtonText}>
-                SUBMIT
-              </Text>
-            </TouchableOpacity>
+                <Text style={styles.inputLabel}>6-Digit OTP Code</Text>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="123456"
+                  placeholderTextColor="#94A3B8"
+                  value={otpInput}
+                  onChangeText={setOtpInput}
+                  keyboardType="number-pad"
+                  maxLength={6}
+                />
+
+                <TouchableOpacity
+                  style={styles.submitButton}
+                  onPress={handleVerifyEmailOtp}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.submitButtonText}>VERIFY & UPDATE</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.backToEditEmailBtn}
+                  onPress={() => setPendingEmailVerification(false)}
+                >
+                  <Text style={styles.backToEditEmailText}>Change email address</Text>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
         </View>
       </Modal>
@@ -410,9 +454,7 @@ export default function ProfileScreen() {
               onPress={() => setSuccessModalVisible(false)}
               activeOpacity={0.8}
             >
-              <Text style={styles.successButtonText}>
-                OK
-              </Text>
+              <Text style={styles.successButtonText}>OK</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -426,11 +468,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F8FAFC',
   },
-
   content: {
     paddingBottom: 40,
   },
-
   header: {
     backgroundColor: '#15803D',
     flexDirection: 'row',
@@ -440,21 +480,17 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
     paddingHorizontal: 20,
   },
-
   backButton: {
     padding: 4,
   },
-
   headerTitle: {
     color: '#FFFFFF',
     fontSize: 18,
     fontWeight: 'bold',
   },
-
   headerSpacer: {
     width: 32,
   },
-
   card: {
     backgroundColor: '#FFFFFF',
     margin: 20,
@@ -468,7 +504,6 @@ const styles = StyleSheet.create({
     shadowRadius: 5,
     elevation: 2,
   },
-
   avatarContainer: {
     width: 80,
     height: 80,
@@ -479,12 +514,10 @@ const styles = StyleSheet.create({
     marginBottom: 24,
     overflow: 'hidden',
   },
-
   profileImageStyle: {
     width: '100%',
     height: '100%',
   },
-
   infoRow: {
     width: '100%',
     flexDirection: 'row',
@@ -492,67 +525,61 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 12,
   },
-
   infoTextContainer: {
     flex: 1,
     marginRight: 10,
   },
-
   label: {
     fontSize: 12,
     color: '#94A3B8',
     marginBottom: 4,
   },
-
   value: {
     fontSize: 15,
     fontWeight: '600',
     color: '#0F172A',
   },
-
   editIconBtn: {
     padding: 8,
   },
-
   divider: {
     width: '100%',
     height: 1,
     backgroundColor: '#F1F5F9',
   },
-
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     padding: 20,
   },
-
   modalContent: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 20,
   },
-
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 20,
   },
-
   modalTitle: {
     fontSize: 14,
     fontWeight: 'bold',
     color: '#0F172A',
     letterSpacing: 0.5,
   },
-
   inputLabel: {
     fontSize: 12,
     color: '#64748B',
     marginBottom: 6,
   },
-
+  subtitleModalText: {
+    fontSize: 13,
+    color: '#64748B',
+    marginBottom: 16,
+  },
   textInput: {
     borderWidth: 1,
     borderColor: '#E2E8F0',
@@ -564,7 +591,6 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     backgroundColor: '#F8FAFC',
   },
-
   submitButton: {
     backgroundColor: '#15803D',
     borderRadius: 10,
@@ -572,14 +598,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 8,
   },
-
   submitButtonText: {
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: 'bold',
     letterSpacing: 1,
   },
-
+  backToEditEmailBtn: {
+    marginTop: 12,
+    alignItems: 'center',
+  },
+  backToEditEmailText: {
+    color: '#15803D',
+    fontSize: 13,
+    fontWeight: '600',
+  },
   successModalContent: {
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
@@ -590,7 +623,6 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 5,
   },
-
   successIconContainer: {
     width: 60,
     height: 60,
@@ -600,7 +632,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
-
   successTitle: {
     fontSize: 18,
     fontWeight: 'bold',
@@ -608,7 +639,6 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     textAlign: 'center',
   },
-
   successSubtitle: {
     fontSize: 13,
     color: '#64748B',
@@ -616,7 +646,6 @@ const styles = StyleSheet.create({
     marginBottom: 24,
     paddingHorizontal: 10,
   },
-
   successButton: {
     backgroundColor: '#15803D',
     borderRadius: 10,
@@ -624,7 +653,6 @@ const styles = StyleSheet.create({
     width: '100%',
     alignItems: 'center',
   },
-
   successButtonText: {
     color: '#FFFFFF',
     fontSize: 14,
